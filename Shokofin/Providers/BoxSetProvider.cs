@@ -1,17 +1,16 @@
 using System;
 using System.Collections.Generic;
-using System.IO;
 using System.Linq;
 using System.Net.Http;
 using System.Threading;
 using System.Threading.Tasks;
-using MediaBrowser.Controller.Entities;
 using MediaBrowser.Controller.Entities.Movies;
 using MediaBrowser.Controller.Providers;
 using MediaBrowser.Model.Entities;
 using MediaBrowser.Model.Providers;
 using Microsoft.Extensions.Logging;
 using Shokofin.API;
+using Shokofin.Utils;
 
 namespace Shokofin.Providers
 {
@@ -33,50 +32,44 @@ namespace Shokofin.Providers
             try
             {
                 var result = new MetadataResult<BoxSet>();
+                var (id, series) = await DataUtil.GetSeriesInfoByPath(info.Path);
 
-                var dirname = Path.DirectorySeparatorChar + info.Path.Split(Path.DirectorySeparatorChar).Last();
-
-                _logger.LogInformation($"Shoko Scanner... Getting series ID ({dirname})");
-
-                var apiResponse = await ShokoAPI.GetSeriesPathEndsWith(dirname);
-                var seriesIDs = apiResponse.FirstOrDefault()?.IDs;
-                var seriesId = seriesIDs?.ID.ToString();
-
-                if (string.IsNullOrEmpty(seriesId))
+                if (series == null)
                 {
-                    _logger.LogInformation("Shoko Scanner... BoxSet not found!");
-                    return result;
-                }
-                _logger.LogInformation($"Shoko Scanner... Getting series metadata ({dirname} - {seriesId})");
-
-                var aniDbInfo = await ShokoAPI.GetSeriesAniDb(seriesId);
-                if (aniDbInfo.SeriesType != "0" /* Movie */)
-                {
-                    _logger.LogInformation("Shoko Scanner... series was not a movie! Skipping.");
+                    _logger.LogWarning($"Shoko Scanner... Unable to find series info for path {info.Path}");
                     return result;
                 }
 
-                var seriesInfo = await ShokoAPI.GetSeries(seriesId);
-                if (seriesInfo.Sizes.Total.Episodes <= 1)
+                int aniDBId = series.AniDB.ID;
+                var tvdbId = series?.TvDBID;
+
+                if (series.AniDB.SeriesType != "0" /* movie */)
                 {
-                    _logger.LogInformation("Shoko Scanner... series did not contain multiple movies! Skipping.");
+                    _logger.LogWarning($"Shoko Scanner... File found, but not a movie! Skipping.");
                     return result;
                 }
-                var tags = await ShokoAPI.GetSeriesTags(seriesId, Helper.GetTagFilter());
 
-                var ( displayTitle, alternateTitle ) = Helper.GetSeriesTitles(aniDbInfo.Titles, aniDbInfo.Title, Plugin.Instance.Configuration.TitleMainType, Plugin.Instance.Configuration.TitleAlternateType, info.MetadataLanguage);
+                if (series.Shoko.Sizes.Total.Episodes <= 1)
+                {
+                    _logger.LogWarning("Shoko Scanner... series did not contain multiple movies! Skipping.");
+                    return result;
+                }
+
+                var ( displayTitle, alternateTitle ) = TextUtil.GetSeriesTitles(series.AniDB.Titles, series.AniDB.Title, info.MetadataLanguage);
+                var tags = await DataUtil.GetTags(series.ID);
+                
                 result.Item = new BoxSet
                 {
                     Name = displayTitle,
                     OriginalTitle = alternateTitle,
-                    Overview = Helper.SummarySanitizer(aniDbInfo.Description),
-                    PremiereDate = aniDbInfo.AirDate,
-                    EndDate = aniDbInfo.EndDate,
-                    ProductionYear = aniDbInfo.AirDate?.Year,
-                    Tags = tags?.Select(tag => tag.Name).ToArray() ?? new string[0],
-                    CommunityRating = (float)((aniDbInfo.Rating.Value * 10) / aniDbInfo.Rating.MaxValue)
+                    Overview = TextUtil.SummarySanitizer(series.AniDB.Description),
+                    PremiereDate = series.AniDB.AirDate,
+                    EndDate = series.AniDB.EndDate,
+                    ProductionYear = series.AniDB.AirDate?.Year,
+                    Tags = tags,
+                    CommunityRating = (float)((series.AniDB.Rating.Value * 10) / series.AniDB.Rating.MaxValue)
                 };
-                result.Item.SetProviderId("Shoko Series", seriesId);
+                result.Item.SetProviderId("Shoko Series", series.ID);
                 result.HasMetadata = true;
 
                 return result;
@@ -96,7 +89,7 @@ namespace Shokofin.Providers
 
             foreach (var series in searchResults)
             {
-                var imageUrl = Helper.GetImageUrl(series.Images.Posters.FirstOrDefault());
+                var imageUrl = DataUtil.GetImageUrl(series.Images.Posters.FirstOrDefault());
                 _logger.LogInformation(imageUrl);
                 var parsedBoxSet = new RemoteSearchResult
                 {
