@@ -6,30 +6,11 @@ using System.Threading.Tasks;
 using Shokofin.API;
 using Shokofin.API.Models;
 using Path = System.IO.Path;
-using MediaBrowser.Model.Providers;
 
 namespace Shokofin.Utils
 {
     public class DataUtil
     {
-        internal static string GetImageUrl(Image image)
-        {
-            return image != null ? $"http://{Plugin.Instance.Configuration.Host}:{Plugin.Instance.Configuration.Port}/api/v3/Image/{image.Source}/{image.Type}/{image.ID}" : null;
-        }
-
-        public static RemoteImageInfo GetImage(Image image, ImageType imageType)
-        {
-
-            var imageUrl = GetImageUrl(image);
-            if (string.IsNullOrEmpty(imageUrl))
-                return null;
-            return new RemoteImageInfo
-            {
-                ProviderName = "Shoko",
-                Type = imageType,
-                Url = imageUrl
-            };
-        }
 
         public static float GetRating(Rating rating)
         {
@@ -47,7 +28,7 @@ namespace Shokofin.Utils
                     Type = PersonType.Actor,
                     Name = role.Staff.Name,
                     Role = role.Character.Name,
-                    ImageUrl = GetImageUrl(role.Staff.Image)
+                    ImageUrl = role.Staff.Image?.ToURLString(),
                 });
             }
             return list;
