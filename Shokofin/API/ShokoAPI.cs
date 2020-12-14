@@ -27,7 +27,7 @@ namespace Shokofin.API
 
             try
             {
-                var apiBaseUrl = $"http://{Plugin.Instance.Configuration.Host}:{Plugin.Instance.Configuration.Port}";
+                var apiBaseUrl = Plugin.Instance.Configuration.Host;
                 switch (requestType)
                 {
                     case "POST":
@@ -63,8 +63,7 @@ namespace Shokofin.API
                 {"pass", Plugin.Instance.Configuration.Password},
                 {"device", "Shoko Jellyfin Plugin"}
             });
-            
-            var apiBaseUrl = $"http://{Plugin.Instance.Configuration.Host}:{Plugin.Instance.Configuration.Port}";
+            var apiBaseUrl = Plugin.Instance.Configuration.Host;
             var response = await _httpClient.PostAsync($"{apiBaseUrl}/api/auth", new StringContent(postData, Encoding.UTF8, "application/json"));
             if (response.StatusCode == HttpStatusCode.OK)
                 return await JsonSerializer.DeserializeAsync<ApiKey>(response.Content.ReadAsStreamAsync().Result);
@@ -78,6 +77,18 @@ namespace Shokofin.API
             return responseStream != null ? await JsonSerializer.DeserializeAsync<Episode>(responseStream) : null;
         }
 
+        public static async Task<List<Episode>> GetEpisodesFromSeries(string seriesId)
+        {
+            var responseStream = await CallApi($"/api/v3/Series/{seriesId}/Episode");
+            return responseStream != null ? await JsonSerializer.DeserializeAsync<List<Episode>>(responseStream) : null;
+        }
+
+        public static async Task<List<Episode>> GetEpisodeFromFile(string id)
+        {
+            var responseStream = await CallApi($"/api/v3/File/{id}/Episode");
+            return responseStream != null ? await JsonSerializer.DeserializeAsync<List<Episode>>(responseStream) : null;
+        }
+
         public static async Task<Episode.AniDB> GetEpisodeAniDb(string id)
         {
             var responseStream = await CallApi($"/api/v3/Episode/{id}/AniDB");
@@ -89,8 +100,14 @@ namespace Shokofin.API
             var responseStream = await CallApi($"/api/v3/Episode/{id}/TvDB");
             return responseStream != null ? await JsonSerializer.DeserializeAsync<IEnumerable<Episode.TvDB>>(responseStream) : null;
         }
+
+        public static async Task<File> GetFile(string id)
+        {
+            var responseStream = await CallApi($"/api/v3/File/{id}");
+            return responseStream != null ? await JsonSerializer.DeserializeAsync<File>(responseStream) : null;
+        }
         
-        public static async Task<IEnumerable<File.FileDetailed>> GetFilePathEndsWith(string filename)
+        public static async Task<IEnumerable<File.FileDetailed>> GetFileByPath(string filename)
         {
             var responseStream = await CallApi($"/api/v3/File/PathEndsWith/{Uri.EscapeDataString(filename)}");
             return responseStream != null ? await JsonSerializer.DeserializeAsync<IEnumerable<File.FileDetailed>>(responseStream) : null;
@@ -100,6 +117,18 @@ namespace Shokofin.API
         {
             var responseStream = await CallApi($"/api/v3/Series/{id}");
             return responseStream != null ? await JsonSerializer.DeserializeAsync<Series>(responseStream) : null;
+        }
+
+        public static async Task<Series> GetSeriesFromEpisode(string id)
+        {
+            var responseStream = await CallApi($"/api/v3/Episode/{id}/Series");
+            return responseStream != null ? await JsonSerializer.DeserializeAsync<Series>(responseStream) : null;
+        }
+
+        public static async Task<List<Series>> GetSeriesInGroup(string id)
+        {
+            var responseStream = await CallApi($"/api/v3/Filter/0/Group/{id}/Series");
+            return responseStream != null ? await JsonSerializer.DeserializeAsync<List<Series>>(responseStream) : null;
         }
         
         public static async Task<Series.AniDB> GetSeriesAniDb(string id)
@@ -130,6 +159,18 @@ namespace Shokofin.API
         {
             var responseStream = await CallApi($"/api/v3/Series/{id}/Tags/{filter}");
             return responseStream != null ? await JsonSerializer.DeserializeAsync<IEnumerable<Tag>>(responseStream) : null;
+        }
+        
+        public static async Task<Group> GetGroup(string id)
+        {
+            var responseStream = await CallApi($"/api/v3/Group/{id}");
+            return responseStream != null ? await JsonSerializer.DeserializeAsync<Group>(responseStream) : null;
+        }
+        
+        public static async Task<Group> GetGroupFromSeries(string id)
+        {
+            var responseStream = await CallApi($"/api/v3/Series/{id}/Group");
+            return responseStream != null ? await JsonSerializer.DeserializeAsync<Group>(responseStream) : null;
         }
 
         public static async Task<bool> MarkEpisodeWatched(string id)

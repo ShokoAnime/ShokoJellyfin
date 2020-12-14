@@ -1,7 +1,5 @@
 using System;
 using System.Collections.Generic;
-using System.IO;
-using System.Linq;
 using System.Net.Http;
 using System.Threading;
 using System.Threading.Tasks;
@@ -11,22 +9,27 @@ using MediaBrowser.Controller.Providers;
 using MediaBrowser.Model.Entities;
 using MediaBrowser.Model.Providers;
 using Microsoft.Extensions.Logging;
-using Shokofin.API;
+using Shokofin.Utils;
+
+using IResolverIgnoreRule = MediaBrowser.Controller.Resolvers.IResolverIgnoreRule;
+using ILibraryManager = MediaBrowser.Controller.Library.ILibraryManager;
 
 namespace Shokofin.Providers
 {
-    public class MovieProvider : IRemoteMetadataProvider<Movie, MovieInfo>
+    public class MovieProvider : IRemoteMetadataProvider<Movie, MovieInfo>, IResolverIgnoreRule
     {
         public string Name => "Shoko";
         private readonly IHttpClientFactory _httpClientFactory;
         private readonly ILogger<MovieProvider> _logger;
 
-        public MovieProvider(IHttpClientFactory httpClientFactory, ILogger<MovieProvider> logger)
-        {
-            _httpClientFactory = httpClientFactory;
-            _logger = logger;
-        }
+        private readonly ILibraryManager _library;
 
+        public MovieProvider(IHttpClientFactory httpClientFactory, ILogger<MovieProvider> logger, ILibraryManager library)
+        {
+            _logger = logger;
+            _httpClientFactory = httpClientFactory;
+            _library = library;
+        }
 
         public async Task<MetadataResult<Movie>> GetMetadata(MovieInfo info, CancellationToken cancellationToken)
         {
@@ -34,87 +37,59 @@ namespace Shokofin.Providers
             {
                 var result = new MetadataResult<Movie>();
 
-                // TO-DO Check if it can be written in a better way. Parent directory + File Name
-                var filename = Path.Join(
-                        Path.GetDirectoryName(info.Path)?.Split(Path.DirectorySeparatorChar).LastOrDefault(),
-                        Path.GetFileName(info.Path));
+                var includeGroup = Plugin.Instance.Configuration.BoxSetGrouping == OrderingUtil.SeriesOrBoxSetGroupType.ShokoGroup;
+                var (id, file, episode, series, group) = await DataUtil.GetFileInfoByPath(info.Path, includeGroup, true);
 
-                _logger.LogInformation($"Shoko Scanner... Getting movie ID ({filename})");
-
-                var apiResponse = await ShokoAPI.GetFilePathEndsWith(filename);
-                var file = apiResponse?.FirstOrDefault();
-                var fileId = file?.ID.ToString();
-                var seriesIds = file?.SeriesIDs.FirstOrDefault();
-                var seriesId = seriesIds?.SeriesID.ID.ToString();
-                var episodeIds = seriesIds?.EpisodeIDs?.FirstOrDefault();
-                var episodeId = episodeIds?.ID.ToString();
-
-                if (string.IsNullOrEmpty(episodeId) || string.IsNullOrEmpty(seriesId))
+                if (file == null) // if file is null then series and episode is also null.
                 {
-                    _logger.LogInformation($"Shoko Scanner... File not found! ({filename})");
+                    _logger.LogWarning($"Shoko Scanner... Unable to find file info for path {info.Path}");
                     return result;
                 }
 
-                _logger.LogInformation($"Shoko Scanner... Getting movie metadata ({filename} - {episodeId})");
+                bool isMultiEntry = series.Shoko.Sizes.Total.Episodes > 1;
+                int aniDBId = isMultiEntry ? episode.AniDB.ID : series.AniDB.ID;
+                var tvdbId = (isMultiEntry ? episode?.TvDB == null ? null : episode.TvDB.ID.ToString() : series?.TvDBID);
 
-                var seriesAniDB = await ShokoAPI.GetSeriesAniDb(seriesId);
-                var series = await ShokoAPI.GetSeries(seriesId);
-                var episodeAniDB = await ShokoAPI.GetEpisodeAniDb(episodeId);
-                var episode = await ShokoAPI.GetEpisode(episodeId);
-                bool isMultiEntry = series.Sizes.Total.Episodes > 1;
-                int aniDBId = (isMultiEntry ? episodeIds?.AniDB : seriesIds?.SeriesID.AniDB) ?? 0;
-                int tvdbId = (isMultiEntry ? episodeIds?.TvDB?.FirstOrDefault() : seriesIds?.SeriesID.TvDB?.FirstOrDefault()) ?? 0;
-
-                if (seriesAniDB?.SeriesType != "0")
+                if (series.AniDB.SeriesType != "0" /* movie */)
                 {
-                    _logger.LogInformation($"Shoko Scanner... File found, but not a movie! Skipping.");
+                    _logger.LogWarning($"Shoko Scanner... File found, but not a movie! Skipping path {id}");
                     return result;
                 }
 
-                var tags = await ShokoAPI.GetSeriesTags(seriesId, Helper.GetTagFilter());
-                var ( displayTitle, alternateTitle ) = Helper.GetMovieTitles(seriesAniDB.Titles, episodeAniDB.Titles, series.Name, episode.Name, Plugin.Instance.Configuration.TitleMainType, Plugin.Instance.Configuration.TitleAlternateType, info.MetadataLanguage);
-                float rating = isMultiEntry ? (float)((episodeAniDB.Rating.Value * 10) / episodeAniDB.Rating.MaxValue) : (float)((seriesAniDB.Rating.Value * 10) / seriesAniDB.Rating.MaxValue);
-                ExtraType? extraType = Helper.GetExtraType(episodeAniDB);
+                var tags = await DataUtil.GetTags(series.ID);
+                var ( displayTitle, alternateTitle ) = TextUtil.GetMovieTitles(series.AniDB.Titles, episode.AniDB.Titles, series.Shoko.Name, episode.Shoko.Name, info.MetadataLanguage);
+                var rating = isMultiEntry ? episode.AniDB.Rating.ToFloat(10) : series.AniDB.Rating.ToFloat(10);
 
                 result.Item = new Movie
                 {
-                    IndexNumber = Helper.GetAbsoluteIndexNumber(series, episodeAniDB),
+                    IndexNumber = OrderingUtil.GetMovieIndexNumber(group, series, episode),
                     Name = displayTitle,
                     OriginalTitle = alternateTitle,
-                    PremiereDate = episodeAniDB.AirDate,
+                    PremiereDate = episode.AniDB.AirDate,
                     // Use the file description if collection contains more than one movie, otherwise use the collection description.
-                    Overview = Helper.SummarySanitizer((isMultiEntry ? episodeAniDB.Description ?? seriesAniDB.Description : seriesAniDB.Description) ?? ""),
-                    ProductionYear = episodeAniDB.AirDate?.Year,
-                    ExtraType = extraType,                    
-                    Tags = tags?.Select(tag => tag.Name).ToArray() ?? new string[0],
+                    Overview = TextUtil.SummarySanitizer((isMultiEntry ? episode.AniDB.Description ?? series.AniDB.Description : series.AniDB.Description) ?? ""),
+                    ProductionYear = episode.AniDB.AirDate?.Year,     
+                    Tags = tags,
                     CommunityRating = rating,
                 };
-                result.Item.SetProviderId("Shoko File", fileId);
-                result.Item.SetProviderId("Shoko Series", seriesId);
-                result.Item.SetProviderId("Shoko Episode", episodeId);
-                if (aniDBId != 0) result.Item.SetProviderId("AniDB", aniDBId.ToString());
-                if (tvdbId != 0) result.Item.SetProviderId("Tvdb", tvdbId.ToString());
+                result.Item.SetProviderId("Shoko File", file.ID);
+                result.Item.SetProviderId("Shoko Series", series.ID);
+                result.Item.SetProviderId("Shoko Episode", episode.ID);
+                if (aniDBId != 0)
+                    result.Item.SetProviderId("AniDB", aniDBId.ToString());
+                if (!string.IsNullOrEmpty(tvdbId))
+                    result.Item.SetProviderId("Tvdb", tvdbId);
                 result.HasMetadata = true;
 
                 result.ResetPeople();
-                var roles = await ShokoAPI.GetSeriesCast(seriesId);
-                foreach (var role in roles)
-                {
-                    result.AddPerson(new PersonInfo
-                    {
-                        Type = PersonType.Actor,
-                        Name = role.Staff.Name,
-                        Role = role.Character.Name,
-                        ImageUrl = Helper.GetImageUrl(role.Staff.Image)
-                    });
-                }
+                foreach (var person in await DataUtil.GetPeople(series.ID))
+                    result.AddPerson(person);
 
                 return result;
             }
             catch (Exception e)
             {
-                _logger.LogError(e.Message);
-                _logger.LogError(e.InnerException?.StackTrace ?? e.StackTrace);
+                _logger.LogError($"{e.Message}{Environment.NewLine}{e.StackTrace}");
                 return new MetadataResult<Movie>();
             }
         }
@@ -129,6 +104,42 @@ namespace Shokofin.Providers
         public Task<HttpResponseMessage> GetImageResponse(string url, CancellationToken cancellationToken)
         {
             return _httpClientFactory.CreateClient().GetAsync(url, cancellationToken);
+        }
+
+        public bool ShouldIgnore(MediaBrowser.Model.IO.FileSystemMetadata fileInfo, BaseItem parent)
+        {
+            // Skip this handler if one of these requirements are met
+            if (fileInfo == null || parent == null || fileInfo.IsDirectory || !fileInfo.Exists)
+                return false;
+            var libType = _library.GetInheritedContentType(parent);
+            if (libType != "movies") {
+                return false;
+            }
+            try {
+                var (id, file, episode, series, _group) = DataUtil.GetFileInfoByPath(fileInfo);
+                if (file == null)
+                {
+                    _logger.LogWarning($"Shoko Scanner... Unable to find series info for path {id}");
+                    return false;
+                }
+                _logger.LogInformation($"Shoko Filter... Found series info for path {id}");
+                if (series.AniDB.SeriesType != "0") {
+                    return true;
+                }
+                var extraType = OrderingUtil.GetExtraType(episode.AniDB);
+                if (extraType != null) {
+                    _logger.LogInformation($"Shoko Filter... File was not a 'normal' episode for path, skipping! {id}");
+                    return true;
+                }
+                // Ignore everything except movies
+                return false;
+            }
+            catch (System.Exception e)
+            {
+                if (!(e is System.Net.Http.HttpRequestException && e.Message.Contains("Connection refused")))
+                    _logger.LogError(e, "Threw unexpectedly");
+                return false;
+            }
         }
     }
 }
