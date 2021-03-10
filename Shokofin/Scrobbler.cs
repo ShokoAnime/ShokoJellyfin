@@ -19,7 +19,7 @@ namespace Shokofin
             _sessionManager = sessionManager;
             _logger = logger;
         }
-        
+
         public Task RunAsync()
         {
             _sessionManager.PlaybackStopped += KernelPlaybackStopped;
@@ -29,7 +29,7 @@ namespace Shokofin
         private async void KernelPlaybackStopped(object sender, PlaybackStopEventArgs e)
         {
             if (!Plugin.Instance.Configuration.UpdateWatchedStatus) return;
-            
+
             if (e.Item == null)
             {
                 _logger.LogError("Shoko Scrobbler... Event details incomplete. Cannot process current media");
@@ -39,7 +39,7 @@ namespace Shokofin
             if (e.Item is Episode episode && e.PlayedToCompletion)
             {
                 var episodeId = episode.GetProviderId("Shoko Episode");
-                
+
                 _logger.LogInformation("Shoko Scrobbler... Item is played. Marking as watched on Shoko");
                 _logger.LogInformation($"{episode.SeriesName} - {episode.Name} ({episodeId})");
 
@@ -50,7 +50,7 @@ namespace Shokofin
                     _logger.LogError("Shoko Scrobbler... Error marking episode as watched!");
             }
         }
-        
+
         public void Dispose()
         {
             _sessionManager.PlaybackStopped -= KernelPlaybackStopped;

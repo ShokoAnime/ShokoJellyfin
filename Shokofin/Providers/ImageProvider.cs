@@ -10,7 +10,7 @@ using MediaBrowser.Controller.Providers;
 using MediaBrowser.Model.Entities;
 using MediaBrowser.Model.Providers;
 using Microsoft.Extensions.Logging;
-using Shokofin.Utils;
+using Shokofin.API;
 
 namespace Shokofin.Providers
 {
@@ -19,7 +19,7 @@ namespace Shokofin.Providers
         public string Name => "Shoko";
         private readonly IHttpClientFactory _httpClientFactory;
         private readonly ILogger<ImageProvider> _logger;
-        
+
         public ImageProvider(IHttpClientFactory httpClientFactory, ILogger<ImageProvider> logger)
         {
             _httpClientFactory = httpClientFactory;
@@ -31,30 +31,30 @@ namespace Shokofin.Providers
             var list = new List<RemoteImageInfo>();
             try
             {
-                DataUtil.EpisodeInfo episode = null;
-                DataUtil.SeriesInfo series = null;
+                Shokofin.API.Info.EpisodeInfo episode = null;
+                Shokofin.API.Info.SeriesInfo series = null;
                 if (item is Episode)
                 {
-                    episode = await DataUtil.GetEpisodeInfo(item.GetProviderId("Shoko Episode"));
+                    episode = await DataFetcher.GetEpisodeInfo(item.GetProviderId("Shoko Episode"));
                 }
                 else if (item is Series)
                 {
                     var groupId = item.GetProviderId("Shoko Group");
                     if (string.IsNullOrEmpty(groupId))
                     {
-                        series = await DataUtil.GetSeriesInfo(item.GetProviderId("Shoko Series"));
+                        series = await DataFetcher.GetSeriesInfo(item.GetProviderId("Shoko Series"));
                     }
                     else {
-                        series = (await DataUtil.GetGroupInfo(groupId))?.DefaultSeries;
+                        series = (await DataFetcher.GetGroupInfo(groupId))?.DefaultSeries;
                     }
                 }
                 else if (item is BoxSet || item is Movie)
                 {
-                    series = await DataUtil.GetSeriesInfo(item.GetProviderId("Shoko Series"));
+                    series = await DataFetcher.GetSeriesInfo(item.GetProviderId("Shoko Series"));
                 }
                 else if (item is Season)
                 {
-                    series = await DataUtil.GetSeriesInfoFromGroup(item.GetParent()?.GetProviderId("Shoko Group"), item.IndexNumber ?? 1);
+                    series = await DataFetcher.GetSeriesInfoFromGroup(item.GetParent()?.GetProviderId("Shoko Group"), item.IndexNumber ?? 1);
                 }
                 if (episode != null)
                 {
@@ -108,12 +108,12 @@ namespace Shokofin.Providers
         {
             return new[] { ImageType.Primary, ImageType.Backdrop, ImageType.Banner };
         }
-        
+
         public bool Supports(BaseItem item)
         {
             return item is Series || item is Season || item is Episode || item is Movie || item is BoxSet;
         }
-        
+
         public Task<HttpResponseMessage> GetImageResponse(string url, CancellationToken cancellationToken)
         {
             return _httpClientFactory.CreateClient().GetAsync(url, cancellationToken);
